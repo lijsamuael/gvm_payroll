@@ -1,0 +1,21 @@
+[
+ {
+  "allow_guest": 0,
+  "api_method": null,
+  "cron_format": "0 0 1 4,10 *",
+  "disabled": 0,
+  "docstatus": 0,
+  "doctype": "Server Script",
+  "doctype_event": "Before Insert",
+  "enable_rate_limit": 0,
+  "event_frequency": "Cron",
+  "modified": "2025-12-08 16:57:58.727180",
+  "module": "Gvm Payroll",
+  "name": "Update Employee Experience Year",
+  "rate_limit_count": 5,
+  "rate_limit_seconds": 86400,
+  "reference_doctype": null,
+  "script": "# It will only execute increment logic on April 1 or October 1\n\ntoday = frappe.utils.nowdate()\ncurrent_date = frappe.utils.getdate(today)\n\n\nemployees = frappe.get_all(\"Employee\", fields=[\"name\", \"date_of_joining\", \"custom_years_experienced\"])\n\nfor emp in employees:\n    if not emp.date_of_joining:\n        continue\n\n    doj = frappe.utils.getdate(emp.date_of_joining)\n    years_completed = frappe.utils.date_diff(current_date, doj) // 365\n\n    # If years_completed is already equal to field value, do nothing\n    if emp.custom_years_experienced and years_completed <= emp.custom_years_experienced:\n        continue\n\n    # Only increment ON the correct increment date\n    # Logic: increment only if today IS their valid increment date\n\n    # Determine this year's two increment checkpoints\n    apr_1 = frappe.utils.getdate(f\"{current_date.year}-04-01\")\n    oct_1 = frappe.utils.getdate(f\"{current_date.year}-10-01\")\n\n    # Determine when they complete exactly 1 year\n    one_year_date = frappe.utils.add_years(doj, 1)\n\n    # RULE:\n    # If 1 year completed before April 1 → increment on April 1\n    # Else if 1 year completed before October 1 → increment on October 1\n    # Else → increment on next year's April 1 (but script will catch that next year automatically)\n\n    valid_increment_date = None\n\n    if one_year_date <= apr_1:\n        valid_increment_date = apr_1\n    elif one_year_date <= oct_1:\n        valid_increment_date = oct_1\n    else:\n        # Next year's April 1\n        valid_increment_date = frappe.utils.getdate(f\"{current_date.year + 1}-04-01\")\n\n    # Now increment ONLY if today == valid increment date\n    if current_date == valid_increment_date:\n        new_years = (emp.custom_years_experienced or 0) + 1\n        frappe.db.set_value(\"Employee\", emp.name, \"custom_years_experienced\", new_years)\n",
+  "script_type": "Scheduler Event"
+ }
+]
