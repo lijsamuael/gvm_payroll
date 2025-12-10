@@ -27,6 +27,8 @@ def execute():
 			})
 			custom_field.insert(ignore_permissions=True)
 			frappe.db.commit()
+			# Reload the DocType to ensure the field is accessible
+			frappe.reload_doctype("Payroll Entry")
 	except frappe.exceptions.ValidationError as e:
 		# Field already exists - this is fine, just skip
 		if "already exists" in str(e):
