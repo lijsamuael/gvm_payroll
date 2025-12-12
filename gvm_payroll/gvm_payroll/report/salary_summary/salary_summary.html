@@ -1,0 +1,128 @@
+<div class="container" style="font-size: 10px; color: #111; padding: 6px 8px;">
+	<style>
+		.salary-summary-table {
+			table-layout: auto;
+			width: 100%;
+		}
+		.salary-summary-table th,
+		.salary-summary-table td {
+			padding: 6px 8px;
+			vertical-align: middle;
+			border: 1px solid #ccc;
+			font-size: 9px;
+			word-break: break-word;
+			white-space: normal;
+		}
+		.salary-summary-table th {
+			background: #f3f4f6;
+			font-weight: 500;
+			text-align: center;
+			white-space: nowrap;
+		}
+		.salary-summary-table td.text-right {
+			text-align: right;
+		}
+		.salary-summary-table tfoot td {
+			font-weight: 700;
+			background: #fdf6d5;
+		}
+	</style>
+
+	<div class="row" style="margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 12px;">
+		<div style="flex: 0 0 auto;">
+			<img src="/files/logo.png" alt="Logo" style="max-height: 48px; max-width: 160px;">
+		</div>
+		<div style="flex: 1 1 auto; text-align: center;">
+			<div style="text-transform: uppercase; font-size: 17px; font-weight: 700;">
+				{{ filters.company || __("Company") }}
+			</div>
+			<div style="font-size: 15px; font-weight: 700; margin-top: 2px;">
+				{{ __("Salary Summary") }}
+			</div>
+			<div style="margin-top: 6px; font-size: 10px;">
+				{{ __("Year and Month") }}:
+				{% if (filters.from_date && filters.to_date) { %}
+					{{ frappe.datetime.str_to_user(filters.from_date) }} - {{ frappe.datetime.str_to_user(filters.to_date) }}
+				{% } else { %}
+					{{ frappe.datetime.str_to_user(frappe.datetime.get_today()) }}
+				{% } %}
+			</div>
+		</div>
+	</div>
+
+	{% var visible_columns = []; %}
+	{% for (var c = 0; c < columns.length; c++) { %}
+		{% var col = columns[c]; %}
+		{% if (!col.hidden && col._id !== "_check") { %}
+			{% visible_columns.push(col); %}
+		{% } %}
+	{% } %}
+
+	{% var totals = {}; %}
+	{% for (var i = 0; i < visible_columns.length; i++) { %}
+		{% var col = visible_columns[i]; %}
+		{% if (["Currency", "Float", "Int"].indexOf(col.fieldtype) !== -1) { %}
+			{% totals[col.fieldname || col.id] = 0; %}
+		{% } %}
+	{% } %}
+
+	<table class="table table-bordered salary-summary-table">
+		<thead>
+			<tr>
+				<th style="width: 30px;">#</th>
+				{% for (var i = 0; i < visible_columns.length; i++) { %}
+					{% var col = visible_columns[i]; %}
+					<th>{{ __(col.label || col.name || col.fieldname) }}</th>
+				{% } %}
+			</tr>
+		</thead>
+		<tbody>
+			{% for (var r = 0; r < data.length; r++) { %}
+				{% var row = data[r]; %}
+				<tr>
+					<td class="text-center">{{ r + 1 }}</td>
+					{% for (var i = 0; i < visible_columns.length; i++) { %}
+						{% var col = visible_columns[i]; %}
+						{% var key = col.fieldname || col.id; %}
+						{% var val = row[key]; %}
+						{% var is_numeric = ["Currency", "Float", "Int"].indexOf(col.fieldtype) !== -1; %}
+						{% if (is_numeric) { %}
+							{% totals[key] += (val ? parseFloat(val) : 0); %}
+						{% } %}
+						<td class="{{ is_numeric ? 'text-right' : '' }}">
+							{% if (col.fieldtype === "Currency") { %}
+								{{ fmt_money(val || 0, row.currency || filters.currency || null, 2) }}
+							{% } else { %}
+								{{ val || "" }}
+							{% } %}
+						</td>
+					{% } %}
+				</tr>
+			{% } %}
+		</tbody>
+		{% if (data.length) { %}
+		<tfoot>
+			<tr>
+				<td class="text-right">{{ __("Total") }}</td>
+				{% for (var i = 0; i < visible_columns.length; i++) { %}
+					{% var col = visible_columns[i]; %}
+					{% var key = col.fieldname || col.id; %}
+					{% var is_numeric = ["Currency", "Float", "Int"].indexOf(col.fieldtype) !== -1; %}
+					<td class="{{ is_numeric ? 'text-right' : '' }}">
+						{% if (is_numeric) { %}
+							{% if (col.fieldtype === "Currency") { %}
+								{{ fmt_money(totals[key] || 0, filters.currency || null, 2) }}
+							{% } else { %}
+								{{ totals[key] || 0 }}
+							{% } %}
+						{% } else { %}
+							&nbsp;
+						{% } %}
+					</td>
+				{% } %}
+			</tr>
+		</tfoot>
+		{% } %}
+	</table>
+</div>
+
