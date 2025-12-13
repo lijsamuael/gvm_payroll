@@ -18,14 +18,14 @@ def execute(filters=None):
 	if not salary_slips:
 		return [], []
 
-	# Get salary slip details for earnings and deductions
+	# Fetch earnings and deductions separately
 	ss_earning_map = get_salary_slip_details(salary_slips, "earnings")
 	ss_ded_map = get_salary_slip_details(salary_slips, "deductions")
 
-	# Use exact component names
-	basic_salary_component = "Basic Salary"  # You may need to adjust this if it's named differently
-	esi_employee_component = "ESI - Employee Contribution"
-	esi_employer_component = "ESI-Employer Contribution"
+	# Salary Components (exact names)
+	BASIC_COMPONENT = "Basic Salary"
+	ESI_EMPLOYEE_COMPONENT = "ESI - Employee Contribution"
+	ESI_EMPLOYER_COMPONENT = "ESI-Employer Contribution"
 
 	columns = get_columns()
 
@@ -36,23 +36,24 @@ def execute(filters=None):
 	total_all = 0.0
 
 	for idx, ss in enumerate(salary_slips, start=1):
-		# Get Basic Salary from earnings
-		basic_amount = 0.0
-		if basic_salary_component:
-			basic_amount = flt(ss_earning_map.get(ss.name, {}).get(basic_salary_component, 0))
 
-		# Get ESI Employee Contribution from deductions
-		esi_employee_amount = 0.0
-		if esi_employee_component:
-			esi_employee_amount = flt(ss_ded_map.get(ss.name, {}).get(esi_employee_component, 0))
+		# Basic Salary (from earnings, NOT part of total)
+		basic_amount = flt(
+			ss_earning_map.get(ss.name, {}).get(BASIC_COMPONENT, 0)
+		)
 
-		# Get ESI Employer Contribution from deductions
-		esi_employer_amount = 0.0
-		if esi_employer_component:
-			esi_employer_amount = flt(ss_ded_map.get(ss.name, {}).get(esi_employer_component, 0))
+		# ESI Employee Contribution (from deductions)
+		esi_employee_amount = flt(
+			ss_ded_map.get(ss.name, {}).get(ESI_EMPLOYEE_COMPONENT, 0)
+		)
 
-		# Calculate total for this employee
-		total_amount = basic_amount + esi_employee_amount + esi_employer_amount
+		# ESI Employer Contribution (from earnings)
+		esi_employer_amount = flt(
+			ss_earning_map.get(ss.name, {}).get(ESI_EMPLOYER_COMPONENT, 0)
+		)
+
+		# TOTAL = ESI Employee + ESI Employer (Basic excluded)
+		total_amount = esi_employee_amount + esi_employer_amount
 
 		row = frappe._dict({
 			"idx": idx,
@@ -72,9 +73,8 @@ def execute(filters=None):
 		total_esi_employer += esi_employer_amount
 		total_all += total_amount
 
-	# Add summary row
+	# Summary metadata (for print format)
 	if data:
-		# Store metadata in first row for print format
 		data[0]._meta = {
 			"total_basic": total_basic,
 			"total_esi_employee": total_esi_employee,
@@ -86,13 +86,9 @@ def execute(filters=None):
 			"year": filters.get("year") or "",
 		}
 
-		# Derive month and year from date range if not provided
 		if not data[0]._meta["month"] and filters.get("from_date"):
 			from_date = getdate(filters["from_date"])
 			data[0]._meta["month"] = formatdate(from_date, "MMMM")
-			data[0]._meta["year"] = from_date.year
-		if not data[0]._meta["year"] and filters.get("from_date"):
-			from_date = getdate(filters["from_date"])
 			data[0]._meta["year"] = from_date.year
 
 	return columns, data
