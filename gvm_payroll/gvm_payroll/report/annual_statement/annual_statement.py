@@ -41,6 +41,9 @@ def execute(filters=None):
 	ss_earning_map = get_salary_slip_details(salary_slips, "earnings")
 	ss_ded_map = get_salary_slip_details(salary_slips, "deductions")
 
+	# Get actual component names from salary slips
+	actual_components = get_actual_component_names(salary_slips, ss_earning_map, ss_ded_map)
+
 	# Group salary slips by employee
 	employee_slips = {}
 	for ss in salary_slips:
@@ -79,53 +82,109 @@ def execute(filters=None):
 
 			earnings_map = ss_earning_map.get(ss.name, {})
 			deductions_map = ss_ded_map.get(ss.name, {})
+			
+			# Debug: Check if maps are empty
+			if not earnings_map and not deductions_map:
+				frappe.log_error(
+					title="Annual Statement - Empty Maps Debug",
+					message=frappe.as_json({
+						"employee": employee,
+						"salary_slip_name": ss.name,
+						"available_keys_in_ss_ded_map": list(ss_ded_map.keys())[:10],  # First 10 keys
+						"available_keys_in_ss_earning_map": list(ss_earning_map.keys())[:10],  # First 10 keys
+					})
+				)
 
-			# Basic
-			basic = get_component_amount(earnings_map, ["Basic Salary", "Basic", "BASIC"])
+			# Basic - use actual component name if found
+			basic = 0.0
+			if actual_components.get("basic"):
+				basic = flt(earnings_map.get(actual_components["basic"], 0))
+			else:
+				basic = get_component_amount(earnings_map, ["Basic Salary", "Basic", "BASIC"])
 			monthly_data[month_key]["basic"] += basic
 
-			# DA = Dearness Allowences
-			da = get_component_amount(earnings_map, ["Dearness Allowences", "Dearness Allowence", "DA", "D.A.", "Dearness"])
+			# DA = Dearness Allowences - use actual component name if found
+			da = 0.0
+			if actual_components.get("da"):
+				da = flt(earnings_map.get(actual_components["da"], 0))
+			else:
+				da = get_component_amount(earnings_map, ["Dearness Allowences", "Dearness Allowence", "DA", "D.A.", "Dearness"])
 			monthly_data[month_key]["da"] += da
 
-			# TA = Travel Allowences
-			ta = get_component_amount(earnings_map, ["Travel Allowences", "Travel Allowence", "TA", "T.A.", "Travel"])
+			# TA = Travel Allowences - use actual component name if found
+			ta = 0.0
+			if actual_components.get("ta"):
+				ta = flt(earnings_map.get(actual_components["ta"], 0))
+			else:
+				ta = get_component_amount(earnings_map, ["Travel Allowences", "Travel Allowence", "TA", "T.A.", "Travel"])
 			monthly_data[month_key]["ta"] += ta
 
 			# House Rent = House Rent + Water Charges + Garbage Maintainence + Servant Charge + Parking Charge
-			# Check both earnings and deductions, only add if component exists
+			# Use exact component names from actual_components (found from database)
 			house_rent_total = 0.0
+			house_rent_breakup = {}
 			
-			# House Rent
-			house_rent = get_component_amount(earnings_map, ["House Rent", "HRA", ])
-			if house_rent == 0:
-				house_rent = get_component_amount(deductions_map, ["House Rent", "HRA",])
-			house_rent_total += house_rent
+			def add_component_total(key):
+				"""Add earnings + deductions for a component and store debug info."""
+				if not key:
+					return 0.0
+				# Access maps directly - frappe._dict supports .get()
+				earn = flt(earnings_map.get(key, 0) if earnings_map else 0)
+				ded = flt(deductions_map.get(key, 0) if deductions_map else 0)
+				house_rent_breakup[key] = {"earnings": earn, "deductions": ded}
+				total = earn + ded
+				return total
+
+			# House Rent (exact name from actual_components, avoid "House Rent Allowance")
+			if actual_components.get("house_rent"):
+				comp_name = actual_components["house_rent"]
+				if "allowance" not in comp_name.lower():
+					house_rent_total += add_component_total(comp_name) or 0
 			
 			# Water Charges
-			water = get_component_amount(earnings_map, ["Water Charges", "Water", "Water Charge"])
-			if water == 0:
-				water = get_component_amount(deductions_map, ["Water Charges", "Water", "Water Charge"])
-			house_rent_total += water
+			if actual_components.get("water"):
+				house_rent_total += add_component_total(actual_components["water"]) or 0
 			
 			# Garbage Maintainence
-			garbage = get_component_amount(earnings_map, ["Garbage Maintainence", "Garbage Maintenance", "Garbage", "Garbage Maintainence"])
-			if garbage == 0:
-				garbage = get_component_amount(deductions_map, ["Garbage Maintainence", "Garbage Maintenance", "Garbage", "Garbage Maintainence"])
-			house_rent_total += garbage
+			if actual_components.get("garbage"):
+				house_rent_total += add_component_total(actual_components["garbage"]) or 0
 			
 			# Servant Charge
-			servant = get_component_amount(earnings_map, ["Servant Charge", "Servant", "Servant Charges"])
-			if servant == 0:
-				servant = get_component_amount(deductions_map, ["Servant Charge", "Servant", "Servant Charges"])
-			house_rent_total += servant
+			if actual_components.get("servant"):
+				house_rent_total += add_component_total(actual_components["servant"]) or 0
 			
 			# Parking Charge
-			parking = get_component_amount(earnings_map, ["Parking Charge", "Parking", "Parking Charges"])
-			if parking == 0:
-				parking = get_component_amount(deductions_map, ["Parking Charge", "Parking", "Parking Charges"])
-			house_rent_total += parking
-			
+			if actual_components.get("parking"):
+				house_rent_total += add_component_total(actual_components["parking"]) or 0
+
+			# Log debug info to help diagnose mismatched components/values
+			frappe.log_error(
+				title="Annual Statement - House Rent Debug",
+				message=frappe.as_json({
+					"employee": employee,
+					"employee_name": employee_name,
+					"salary_slip": ss.name,
+					"month_key": month_key,
+					"actual_components_house": {
+						"house_rent": actual_components.get("house_rent"),
+						"water": actual_components.get("water"),
+						"garbage": actual_components.get("garbage"),
+						"servant": actual_components.get("servant"),
+						"parking": actual_components.get("parking"),
+					},
+					"house_rent_breakup": house_rent_breakup,
+					"house_rent_total": house_rent_total,
+					"earnings_map_type": str(type(earnings_map)),
+					"deductions_map_type": str(type(deductions_map)),
+					"earnings_keys": list(earnings_map.keys()) if earnings_map else [],
+					"deductions_keys": list(deductions_map.keys()) if deductions_map else [],
+					"direct_access_test": {
+						"House Rent in deductions": deductions_map.get("House Rent", "NOT_FOUND") if deductions_map else "MAP_EMPTY",
+						"Water Charges in deductions": deductions_map.get("Water Charges", "NOT_FOUND") if deductions_map else "MAP_EMPTY",
+					},
+				})
+			)
+
 			monthly_data[month_key]["house_rent"] += house_rent_total
 
 			# Grinsur = Group Insurance
@@ -154,14 +213,23 @@ def execute(filters=None):
 				monthly_data[month_key]["fixall"] = 40.0
 
 		# Find ANY month with data and copy to all months
-		# Use the first month that has any data (prefer one with basic salary)
+		# Prefer a month that has house_rent > 0 (so we don't lose it), else basic > 0, else any data
 		source_month = None
+
+		# 1) Prefer month with house_rent > 0
 		for month_key, month_data in monthly_data.items():
-			if month_data["basic"] > 0:
+			if month_data["house_rent"] > 0:
 				source_month = month_key
 				break
+
+		# 2) Else month with basic > 0
+		if not source_month:
+			for month_key, month_data in monthly_data.items():
+				if month_data["basic"] > 0:
+					source_month = month_key
+					break
 		
-		# If no month with basic, find any month with any data
+		# 3) Else any month with any data
 		if not source_month:
 			for month_key, month_data in monthly_data.items():
 				if (month_data["basic"] > 0 or month_data["da"] > 0 or month_data["ta"] > 0 or
@@ -332,6 +400,115 @@ def execute(filters=None):
 	return columns, data
 
 
+def get_actual_component_names(salary_slips, ss_earning_map, ss_ded_map):
+	"""Get actual component names from salary slips by searching for keywords."""
+	actual_components = {}
+	
+	# Collect all unique component names from all salary slips
+	all_earnings = set()
+	all_deductions = set()
+	
+	for ss in salary_slips:
+		earnings_map = ss_earning_map.get(ss.name, {})
+		deductions_map = ss_ded_map.get(ss.name, {})
+		all_earnings.update(earnings_map.keys())
+		all_deductions.update(deductions_map.keys())
+	
+	# Find Basic - search for exact match first, then partial
+	for comp in all_earnings:
+		comp_lower = comp.lower().strip()
+		if comp_lower in ["basic", "basic salary"]:
+			actual_components["basic"] = comp
+			break
+	if "basic" not in actual_components:
+		for comp in all_earnings:
+			comp_lower = comp.lower().strip()
+			if "basic" in comp_lower:
+				actual_components["basic"] = comp
+				break
+	
+	# Find DA (Dearness Allowance)
+	for comp in all_earnings:
+		comp_lower = comp.lower().strip()
+		if "dearness" in comp_lower:
+			actual_components["da"] = comp
+			break
+	if "da" not in actual_components:
+		for comp in all_earnings:
+			comp_lower = comp.lower().strip()
+			if comp_lower == "da" or comp_lower.startswith("da "):
+				actual_components["da"] = comp
+				break
+	
+	# Find TA (Travel Allowance)
+	for comp in all_earnings:
+		comp_lower = comp.lower().strip()
+		if "travel" in comp_lower:
+			actual_components["ta"] = comp
+			break
+	if "ta" not in actual_components:
+		for comp in all_earnings:
+			comp_lower = comp.lower().strip()
+			if comp_lower == "ta" or comp_lower.startswith("ta "):
+				actual_components["ta"] = comp
+				break
+	
+	# Find House Rent components - check both earnings and deductions
+	all_components = list(all_earnings) + list(all_deductions)
+	
+	# House Rent - search for various patterns
+	for comp in all_components:
+		comp_lower = comp.lower().strip()
+		if (("house" in comp_lower and "rent" in comp_lower) or 
+			comp_lower in ["hra", "house rent", "h.rent", "h rent"] or
+			comp_lower.startswith("house rent") or comp_lower.startswith("h.rent")):
+			actual_components["house_rent"] = comp
+			break
+	
+	# Water - search for water charges, water, etc.
+	for comp in all_components:
+		comp_lower = comp.lower().strip()
+		if ("water" in comp_lower or comp_lower.startswith("w.") or 
+			comp_lower == "w" or "water charge" in comp_lower):
+			actual_components["water"] = comp
+			break
+	
+	# Garbage - search for garbage, garbage maintainence, etc.
+	for comp in all_components:
+		comp_lower = comp.lower().strip()
+		if ("garbage" in comp_lower or "garb" in comp_lower or
+			comp_lower.startswith("g.") or comp_lower == "g"):
+			actual_components["garbage"] = comp
+			break
+	
+	# Servant - search for servant charge, servant, etc.
+	for comp in all_components:
+		comp_lower = comp.lower().strip()
+		if ("servant" in comp_lower or comp_lower.startswith("serv") or
+			comp_lower.startswith("s.") or comp_lower == "s"):
+			actual_components["servant"] = comp
+			break
+	
+	# Parking - search for parking charge, parking, etc.
+	for comp in all_components:
+		comp_lower = comp.lower().strip()
+		if ("parking" in comp_lower or comp_lower.startswith("park") or
+			comp_lower.startswith("p.") or comp_lower == "p"):
+			actual_components["parking"] = comp
+			break
+	
+	return actual_components
+
+
+def get_component_amount_exact(component_map, component_names):
+	"""Sum amounts for any components that match exactly the provided names."""
+	total = 0.0
+	for name in component_names:
+		if name in component_map:
+			total += flt(component_map[name])
+	return total
+
+
 def get_component_amount(component_map, component_names):
 	"""Get amount for a component, trying multiple name variations."""
 	for comp in component_names:
@@ -345,6 +522,16 @@ def get_component_amount(component_map, component_names):
 			if comp.lower() in key.lower() or key.lower() in comp.lower():
 				return flt(component_map[key])
 	return 0.0
+
+
+def get_component_amount_by_keywords(component_map, keywords):
+	"""Sum all components whose names contain ALL keywords (case-insensitive)."""
+	total = 0.0
+	for key, val in component_map.items():
+		key_l = key.lower()
+		if all(k.lower() in key_l for k in keywords):
+			total += flt(val)
+	return total
 
 
 def get_financial_year_months(from_date, to_date):
